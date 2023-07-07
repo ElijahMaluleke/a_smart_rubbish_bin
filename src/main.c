@@ -1,9 +1,8 @@
-/*
+/********************************************************************************
  * Copyright (c) 2020 Nordic Semiconductor ASA
  *
  * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
- */
-
+ ********************************************************************************/
 #include <zephyr/kernel.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,7 +19,66 @@
 #include <cJSON.h>
 #include <cJSON_os.h>
 #include <zephyr/logging/log.h>
+//
+#include <zephyr/device.h>
+#include <zephyr/devicetree.h>
+#include <zephyr/drivers/gpio.h>
 
+/********************************************************************************
+ *
+ ********************************************************************************/
+#define RUBBISH_BIN_OPENED		1
+#define RUBBISH_BIN_CLOSED		0
+
+#define RUBBISH_BIN_FULL		1
+#define RUBBISH_BIN_EMPTY		0
+
+#define HIGH 				1
+#define LOW 				0
+#define ON 					1
+#define OFF 				0
+
+// Output Pin Signals
+#define BUZZER 				17	    /* sig pin of the buzzer */
+#define LED_ONE 			2
+#define LED_TWO			 	3
+#define LED_THREE			4
+#define LED_FOUR			5
+#define BUTTON_ONE			6
+#define BUTTON_TWO			7
+#define SWITCH_ONE			6
+#define SWITCH_TWO			7
+// Input Pin Signals
+#define RUBBISH_BIN_LID 	18 		/*  */
+#define RUBBISH_BIN_SENSOR  19 		/*  */
+
+#define MAX_OUTPUTS 		9
+#define MAX_INPUTS 			2
+
+/* 1000 msec = 1 sec */
+#define SLEEP_TIME_MS 		1000
+#define SLEEP_TIME_S		1000
+#define SLEEP_TIME_HALF_S	500
+#define SLEEP_TIME_QUOTA_S	250
+
+/* Option 1: by node label */
+#define DEVICE_GPIO0 DT_NODELABEL(gpio0)
+
+/********************************************************************************
+ *
+ ********************************************************************************/
+static uint8_t rubbish_bin_status = RUBBISH_BIN_EMPTY;
+static uint8_t rubbish_bin_lid_status = RUBBISH_BIN_CLOSED;
+static uint32_t output_gpio[MAX_OUTPUTS] = {LED_ONE, LED_TWO, LED_THREE, LED_FOUR, 
+											BUZZER};
+static uint32_t input_gpio[MAX_INPUTS] = {BUTTON_ONE, BUTTON_TWO, SWITCH_ONE, SWITCH_TWO, 
+										  RUBBISH_BIN_SENSOR, RUBBISH_BIN_LID};
+// const struct device *gpio_dev;
+const struct device *gpio_dev = DEVICE_DT_GET(DEVICE_GPIO0);
+
+/********************************************************************************
+ * 
+ ********************************************************************************/
 LOG_MODULE_REGISTER(aws_iot_sample, CONFIG_AWS_IOT_SAMPLE_LOG_LEVEL);
 
 BUILD_ASSERT(!IS_ENABLED(CONFIG_LTE_AUTO_INIT_AND_CONNECT),
@@ -43,12 +101,66 @@ NRF_MODEM_LIB_ON_INIT(aws_iot_init_hook, on_modem_lib_init, NULL);
 /* Initialized to value different than success (0) */
 static int modem_lib_init_result = -1;
 
+/********************************************************************************
+ *
+ ********************************************************************************/
+void configuer_all_inputs(void);
+void configuer_all_outputs(void);
+
+/********************************************************************************
+ *
+ ********************************************************************************/
+void configuer_all_outputs(void)
+{
+	int err;
+	for (uint32_t i = 0; i < MAX_OUTPUTS; i++)
+	{
+		if (!device_is_ready(gpio_dev))
+		{
+			return;
+		}
+
+		err = gpio_pin_configure(gpio_dev, output_gpio[i], GPIO_OUTPUT_INACTIVE);
+		if (err < 0)
+		{
+			return;
+		}
+	}
+}
+
+/********************************************************************************
+ *
+ ********************************************************************************/
+void configuer_all_inputs(void)
+{
+	int err;
+	for (uint32_t i = 0; i < MAX_INPUTS; i++)
+	{
+		if (!device_is_ready(gpio_dev))
+		{
+			return;
+		}
+
+		err = gpio_pin_configure(gpio_dev, input_gpio[i], GPIO_INPUT | GPIO_PULL_DOWN);
+		if (err < 0)
+		{
+			return;
+		}
+	}
+}
+
+/********************************************************************************
+ * 
+ ********************************************************************************/
 static void on_modem_lib_init(int ret, void *ctx)
 {
 	modem_lib_init_result = ret;
 }
 #endif
 
+/********************************************************************************
+ * 
+ ********************************************************************************/
 static int json_add_obj(cJSON *parent, const char *str, cJSON *item)
 {
 	cJSON_AddItemToObject(parent, str, item);
@@ -56,6 +168,9 @@ static int json_add_obj(cJSON *parent, const char *str, cJSON *item)
 	return 0;
 }
 
+/********************************************************************************
+ * 
+ ********************************************************************************/
 static int json_add_str(cJSON *parent, const char *str, const char *item)
 {
 	cJSON *json_str;
@@ -68,6 +183,9 @@ static int json_add_str(cJSON *parent, const char *str, const char *item)
 	return json_add_obj(parent, str, json_str);
 }
 
+/********************************************************************************
+ * 
+ ********************************************************************************/
 static int json_add_number(cJSON *parent, const char *str, double item)
 {
 	cJSON *json_num;
@@ -80,6 +198,9 @@ static int json_add_number(cJSON *parent, const char *str, double item)
 	return json_add_obj(parent, str, json_num);
 }
 
+/********************************************************************************
+ * 
+ ********************************************************************************/
 static int shadow_update(bool version_number_include)
 {
 	int err;
@@ -160,6 +281,9 @@ cleanup:
 	return err;
 }
 
+/********************************************************************************
+ * 
+ ********************************************************************************/
 static void connect_work_fn(struct k_work *work)
 {
 	int err;
@@ -178,6 +302,9 @@ static void connect_work_fn(struct k_work *work)
 	k_work_schedule(&connect_work, K_SECONDS(CONFIG_CONNECTION_RETRY_TIMEOUT_SECONDS));
 }
 
+/********************************************************************************
+ * 
+ ********************************************************************************/
 static void shadow_update_work_fn(struct k_work *work)
 {
 	int err;
@@ -196,6 +323,9 @@ static void shadow_update_work_fn(struct k_work *work)
 	k_work_schedule(&shadow_update_work, K_SECONDS(CONFIG_PUBLICATION_INTERVAL_SECONDS));
 }
 
+/********************************************************************************
+ * 
+ ********************************************************************************/
 static void shadow_update_version_work_fn(struct k_work *work)
 {
 	int err;
@@ -206,6 +336,9 @@ static void shadow_update_version_work_fn(struct k_work *work)
 	}
 }
 
+/********************************************************************************
+ * 
+ ********************************************************************************/
 static void print_received_data(const char *buf, const char *topic,
 				size_t topic_len)
 {
@@ -233,6 +366,9 @@ clean_exit:
 	cJSON_Delete(root_obj);
 }
 
+/********************************************************************************
+ * 
+ ********************************************************************************/
 void aws_iot_event_handler(const struct aws_iot_evt *const evt)
 {
 	switch (evt->type) {
@@ -343,6 +479,9 @@ void aws_iot_event_handler(const struct aws_iot_evt *const evt)
 	}
 }
 
+/********************************************************************************
+ * 
+ ********************************************************************************/
 static void work_init(void)
 {
 	k_work_init_delayable(&shadow_update_work, shadow_update_work_fn);
@@ -350,6 +489,9 @@ static void work_init(void)
 	k_work_init(&shadow_update_version_work, shadow_update_version_work_fn);
 }
 
+/********************************************************************************
+ * 
+ ********************************************************************************/
 #if defined(CONFIG_NRF_MODEM_LIB)
 static void lte_handler(const struct lte_lc_evt *const evt)
 {
@@ -396,6 +538,9 @@ static void lte_handler(const struct lte_lc_evt *const evt)
 	}
 }
 
+/********************************************************************************
+ * 
+ ********************************************************************************/
 static void modem_configure(void)
 {
 	int err;
@@ -411,6 +556,9 @@ static void modem_configure(void)
 	}
 }
 
+/********************************************************************************
+ * 
+ ********************************************************************************/
 static void nrf_modem_lib_dfu_handler(void)
 {
 	int err;
@@ -443,6 +591,9 @@ static void nrf_modem_lib_dfu_handler(void)
 }
 #endif
 
+/********************************************************************************
+ * 
+ ********************************************************************************/
 static int app_topics_subscribe(void)
 {
 	int err;
@@ -464,6 +615,9 @@ static int app_topics_subscribe(void)
 	return err;
 }
 
+/********************************************************************************
+ * 
+ ********************************************************************************/
 static void date_time_event_handler(const struct date_time_evt *evt)
 {
 	switch (evt->type) {
@@ -489,12 +643,39 @@ static void date_time_event_handler(const struct date_time_evt *evt)
 	}
 }
 
+/********************************************************************************
+ * 
+ ********************************************************************************/
 void main(void)
 {
 	int err;
+	uint64_t i;
 
-	LOG_INF("The AWS IoT sample started, version: %s", CONFIG_APP_VERSION);
+	LOG_INF("A Smart Rubbish Bin Collector IoT application started, version: %s", CONFIG_APP_VERSION);
 
+	configuer_all_outputs();
+	configuer_all_inputs();
+	k_msleep(SLEEP_TIME_MS * 10);
+
+	//
+	while(1)
+	{
+		/* code */
+		for(i = 0; i < 5; i++)
+		{
+			gpio_pin_set(gpio_dev, LED_ONE, true);
+			gpio_pin_set(gpio_dev, LED_TWO, true);
+			gpio_pin_set(gpio_dev, LED_THREE, true);
+			gpio_pin_set(gpio_dev, LED_FOUR, true);
+			k_msleep(SLEEP_TIME_MS);	
+			gpio_pin_set(gpio_dev, LED_ONE, false);
+			gpio_pin_set(gpio_dev, LED_TWO, false);
+			gpio_pin_set(gpio_dev, LED_THREE, false);
+			gpio_pin_set(gpio_dev, LED_FOUR, false);
+			k_msleep(SLEEP_TIME_MS);
+		}
+	}
+	
 	cJSON_Init();
 
 #if defined(CONFIG_NRF_MODEM_LIB)
@@ -526,8 +707,8 @@ void main(void)
 	k_sem_take(&lte_connected, K_FOREVER);
 #endif
 
-	/* Trigger a date time update. The date_time API is used to timestamp data that is sent
-	 * to AWS IoT.
+	/** Trigger a date time update. The date_time API is used to timestamp data that is sent
+	 *  to AWS IoT.
 	 */
 	date_time_update_async(date_time_event_handler);
 
