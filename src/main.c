@@ -67,7 +67,7 @@
 /********************************************************************************
  *
  ********************************************************************************/
-static uint8_t rubbish_bin_status = RUBBISH_BIN_EMPTY;
+static uint8_t rubbish_bin_level_status = RUBBISH_BIN_EMPTY;
 static uint8_t rubbish_bin_lid_status = RUBBISH_BIN_LID_CLOSED;
 static uint32_t output_gpio[MAX_OUTPUTS] = {LED_ONE, LED_TWO, LED_THREE, LED_FOUR, 
 											BUZZER};
@@ -76,7 +76,9 @@ static uint32_t input_gpio[MAX_INPUTS] = {BUTTON_ONE, BUTTON_TWO, SWITCH_ONE, SW
 // const struct device *gpio_dev;
 const struct device *gpio_dev = DEVICE_DT_GET(DEVICE_GPIO0);
 struct k_timer buzzer_timer;
+struct k_timer rubbish_timer;
 static struct gpio_callback rubbish_bin_lid_cb_data;
+static struct gpio_callback rubbish_bin_level_cb_data;
 
 /********************************************************************************
  * 
@@ -127,6 +129,26 @@ void rubbish_bin_bin_expiry_function(struct k_timer *timer_id)
 {
 	rubbish_bin_lid_status = RUBBISH_BIN_LID_CLOSED;
 	gpio_pin_set(gpio_dev, LED_ONE, false);
+}
+
+/********************************************************************************
+ * Define the callback function
+ ********************************************************************************/
+void rubbish_bin_level_detected(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+{
+	rubbish_bin_level_status = RUBBISH_BIN_FULL;
+	gpio_pin_set(gpio_dev, LED_TWO, true);
+	/* start periodic timer that expires once every second */
+	k_timer_start(&rubbish_timer, K_SECONDS(10), K_NO_WAIT);
+}
+
+/********************************************************************************
+ * Define a variable of type static struct gpio_callback
+ ********************************************************************************/
+void rubbish_bin_level_expiry_function(struct k_timer *timer_id)
+{
+	rubbish_bin_level_status = RUBBISH_BIN_EMPTY;
+	gpio_pin_set(gpio_dev, LED_TWO, false);
 }
 
 /********************************************************************************
@@ -701,12 +723,26 @@ void main(void)
 		return;
 	}
 
+	/* Configure the interrupt on the distance sensor's pin */
+	err = gpio_pin_interrupt_configure(gpio_dev, BUTTON_TWO, GPIO_INT_LEVEL_INACTIVE);
+	if (err < 0)
+	{
+		return;
+	}
+
 	/* Initialize the static struct gpio_callback variable */
-	gpio_init_callback(&rubbish_bin_lid_cb_data, rubbish_bin_lid_open_detected, BIT(BUTTON_ONE));
+	gpio_init_callback(&rubbish_bin_lid_cb_data, rubbish_bin_lid_open_detected, BIT(BUTTON_TWO));
 	/* Add the callback function by calling gpio_add_callback() */
 	gpio_add_callback(gpio_dev, &rubbish_bin_lid_cb_data);
+
+	/* Initialize the static struct gpio_callback variable */
+	gpio_init_callback(&rubbish_bin_level_cb_data, rubbish_bin_level_detected, BIT(BUTTON_TWO));
+	/* Add the callback function by calling gpio_add_callback() */
+	gpio_add_callback(gpio_dev, &rubbish_bin_level_cb_data);
+
 	//
 	k_timer_init(&buzzer_timer, rubbish_bin_bin_expiry_function, NULL);
+	k_timer_init(&rubbish_timer, rubbish_bin_level_expiry_function, NULL);
 	while (1)
 	{
 		/* code */
