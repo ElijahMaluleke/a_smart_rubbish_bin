@@ -27,8 +27,8 @@
 /********************************************************************************
  *
  ********************************************************************************/
-#define RUBBISH_BIN_OPENED		1
-#define RUBBISH_BIN_CLOSED		0
+#define RUBBISH_BIN_LID_OPENED		1
+#define RUBBISH_BIN_LID_CLOSED		0
 
 #define RUBBISH_BIN_FULL		1
 #define RUBBISH_BIN_EMPTY		0
@@ -68,13 +68,15 @@
  *
  ********************************************************************************/
 static uint8_t rubbish_bin_status = RUBBISH_BIN_EMPTY;
-static uint8_t rubbish_bin_lid_status = RUBBISH_BIN_CLOSED;
+static uint8_t rubbish_bin_lid_status = RUBBISH_BIN_LID_CLOSED;
 static uint32_t output_gpio[MAX_OUTPUTS] = {LED_ONE, LED_TWO, LED_THREE, LED_FOUR, 
 											BUZZER};
 static uint32_t input_gpio[MAX_INPUTS] = {BUTTON_ONE, BUTTON_TWO, SWITCH_ONE, SWITCH_TWO, 
 										  RUBBISH_BIN_SENSOR, RUBBISH_BIN_LID};
 // const struct device *gpio_dev;
 const struct device *gpio_dev = DEVICE_DT_GET(DEVICE_GPIO0);
+struct k_timer buzzer_timer;
+static struct gpio_callback rubbish_bin_lid_cb_data;
 
 /********************************************************************************
  * 
@@ -106,6 +108,26 @@ static int modem_lib_init_result = -1;
  ********************************************************************************/
 void configuer_all_inputs(void);
 void configuer_all_outputs(void);
+
+/********************************************************************************
+ * Define the callback function
+ ********************************************************************************/
+void rubbish_bin_lid_open_detected(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+{
+	rubbish_bin_lid_status = RUBBISH_BIN_LID_OPENED;
+	gpio_pin_set(gpio_dev, LED_ONE, true);
+	/* start periodic timer that expires once every second */
+	k_timer_start(&buzzer_timer, K_SECONDS(10), K_NO_WAIT);
+}
+
+/********************************************************************************
+ * Define a variable of type static struct gpio_callback
+ ********************************************************************************/
+void rubbish_bin_bin_expiry_function(struct k_timer *timer_id)
+{
+	rubbish_bin_lid_status = RUBBISH_BIN_LID_CLOSED;
+	gpio_pin_set(gpio_dev, LED_ONE, false);
+}
 
 /********************************************************************************
  *
@@ -141,7 +163,7 @@ void configuer_all_inputs(void)
 			return;
 		}
 
-		err = gpio_pin_configure(gpio_dev, input_gpio[i], GPIO_INPUT | GPIO_PULL_DOWN);
+		err = gpio_pin_configure(gpio_dev, input_gpio[i], GPIO_INPUT | GPIO_PULL_UP);
 		if (err < 0)
 		{
 			return;
@@ -655,25 +677,39 @@ void main(void)
 
 	configuer_all_outputs();
 	configuer_all_inputs();
-	k_msleep(SLEEP_TIME_MS * 10);
+	k_msleep(SLEEP_TIME_MS * 5);
 
+		/* code */
+	for(i = 0; i < 3; i++)
+	{
+		gpio_pin_set(gpio_dev, LED_ONE, true);
+		gpio_pin_set(gpio_dev, LED_TWO, true);
+		gpio_pin_set(gpio_dev, LED_THREE, true);
+		gpio_pin_set(gpio_dev, LED_FOUR, true);
+		k_msleep(SLEEP_TIME_MS);	
+		gpio_pin_set(gpio_dev, LED_ONE, false);
+		gpio_pin_set(gpio_dev, LED_TWO, false);
+		gpio_pin_set(gpio_dev, LED_THREE, false);
+		gpio_pin_set(gpio_dev, LED_FOUR, false);
+		k_msleep(SLEEP_TIME_MS);
+	}
+
+	/* Configure the interrupt on the reed switch's pin */
+	err = gpio_pin_interrupt_configure(gpio_dev, BUTTON_ONE, GPIO_INT_LEVEL_INACTIVE);
+	if (err < 0)
+	{
+		return;
+	}
+
+	/* Initialize the static struct gpio_callback variable */
+	gpio_init_callback(&rubbish_bin_lid_cb_data, rubbish_bin_lid_open_detected, BIT(BUTTON_ONE));
+	/* Add the callback function by calling gpio_add_callback() */
+	gpio_add_callback(gpio_dev, &rubbish_bin_lid_cb_data);
 	//
-	while(1)
+	k_timer_init(&buzzer_timer, rubbish_bin_bin_expiry_function, NULL);
+	while (1)
 	{
 		/* code */
-		for(i = 0; i < 5; i++)
-		{
-			gpio_pin_set(gpio_dev, LED_ONE, true);
-			gpio_pin_set(gpio_dev, LED_TWO, true);
-			gpio_pin_set(gpio_dev, LED_THREE, true);
-			gpio_pin_set(gpio_dev, LED_FOUR, true);
-			k_msleep(SLEEP_TIME_MS);	
-			gpio_pin_set(gpio_dev, LED_ONE, false);
-			gpio_pin_set(gpio_dev, LED_TWO, false);
-			gpio_pin_set(gpio_dev, LED_THREE, false);
-			gpio_pin_set(gpio_dev, LED_FOUR, false);
-			k_msleep(SLEEP_TIME_MS);
-		}
 	}
 	
 	cJSON_Init();
