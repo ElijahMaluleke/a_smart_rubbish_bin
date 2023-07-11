@@ -114,12 +114,25 @@ void configuer_all_outputs(void);
 /********************************************************************************
  * Define the callback function
  ********************************************************************************/
-void rubbish_bin_lid_open_detected(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+void rubbish_bin_lid_interrupt_handler(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
+	LOG_INF("Button pressed: %d", pins);
 	rubbish_bin_lid_status = RUBBISH_BIN_LID_OPENED;
 	gpio_pin_set(gpio_dev, LED_ONE, true);
 	/* start periodic timer that expires once every second */
-	k_timer_start(&buzzer_timer, K_SECONDS(10), K_NO_WAIT);
+	k_timer_start(&buzzer_timer, K_SECONDS(10), K_NO_WAIT);		
+}
+
+/*
+ *
+ */
+void rubbish_bin_level_interrupt_handler(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+{
+	LOG_INF("Button pressed %d", pins);
+	rubbish_bin_level_status = RUBBISH_BIN_FULL;
+	gpio_pin_set(gpio_dev, LED_TWO, true);
+	/* start periodic timer that expires once every second */
+	k_timer_start(&rubbish_timer, K_SECONDS(5), K_NO_WAIT);
 }
 
 /********************************************************************************
@@ -129,17 +142,6 @@ void rubbish_bin_bin_expiry_function(struct k_timer *timer_id)
 {
 	rubbish_bin_lid_status = RUBBISH_BIN_LID_CLOSED;
 	gpio_pin_set(gpio_dev, LED_ONE, false);
-}
-
-/********************************************************************************
- * Define the callback function
- ********************************************************************************/
-void rubbish_bin_level_detected(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
-{
-	rubbish_bin_level_status = RUBBISH_BIN_FULL;
-	gpio_pin_set(gpio_dev, LED_TWO, true);
-	/* start periodic timer that expires once every second */
-	k_timer_start(&rubbish_timer, K_SECONDS(10), K_NO_WAIT);
 }
 
 /********************************************************************************
@@ -268,7 +270,7 @@ static int shadow_update(bool version_number_include)
 #endif
 
 	cJSON *root_obj = cJSON_CreateObject();
-	cJSON *state_obj = cJSON_CreateObject();
+			cJSON *state_obj = cJSON_CreateObject();
 	cJSON *reported_obj = cJSON_CreateObject();
 
 	if (root_obj == NULL || state_obj == NULL || reported_obj == NULL) {
@@ -731,22 +733,20 @@ void main(void)
 	}
 
 	/* Initialize the static struct gpio_callback variable */
-	gpio_init_callback(&rubbish_bin_lid_cb_data, rubbish_bin_lid_open_detected, BIT(BUTTON_TWO));
+	gpio_init_callback(&rubbish_bin_lid_cb_data, rubbish_bin_lid_interrupt_handler, BIT(BUTTON_ONE));
 	/* Add the callback function by calling gpio_add_callback() */
 	gpio_add_callback(gpio_dev, &rubbish_bin_lid_cb_data);
 
 	/* Initialize the static struct gpio_callback variable */
-	gpio_init_callback(&rubbish_bin_level_cb_data, rubbish_bin_level_detected, BIT(BUTTON_TWO));
+	gpio_init_callback(&rubbish_bin_level_cb_data, rubbish_bin_level_interrupt_handler, BIT(BUTTON_TWO));
 	/* Add the callback function by calling gpio_add_callback() */
 	gpio_add_callback(gpio_dev, &rubbish_bin_level_cb_data);
 
 	//
 	k_timer_init(&buzzer_timer, rubbish_bin_bin_expiry_function, NULL);
 	k_timer_init(&rubbish_timer, rubbish_bin_level_expiry_function, NULL);
-	while (1)
-	{
-		/* code */
-	}
+	
+	// while (1) {/* code */}
 	
 	cJSON_Init();
 
