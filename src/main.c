@@ -30,36 +30,36 @@
 #define RUBBISH_BIN_LID_OPENED		1
 #define RUBBISH_BIN_LID_CLOSED		0
 
-#define RUBBISH_BIN_FULL		1
-#define RUBBISH_BIN_EMPTY		0
+#define RUBBISH_BIN_FULL			1
+#define RUBBISH_BIN_EMPTY			0
 
-#define HIGH 				1
-#define LOW 				0
-#define ON 					1
-#define OFF 				0
+#define HIGH 						1
+#define LOW 						0
+#define ON 							1
+#define OFF 						0
 
 // Output Pin Signals
-#define BUZZER 				17	    /* sig pin of the buzzer */
-#define LED_ONE 			2
-#define LED_TWO			 	3
-#define LED_THREE			4
-#define LED_FOUR			5
-#define BUTTON_ONE			6
-#define BUTTON_TWO			7
-#define SWITCH_ONE			6
-#define SWITCH_TWO			7
+#define BUZZER 						17	    /* sig pin of the buzzer */
+#define LED_ONE 					2
+#define LED_TWO			 			3
+#define LED_THREE					4
+#define LED_FOUR					5
+#define BUTTON_ONE					6
+#define BUTTON_TWO					7
+#define SWITCH_ONE					6
+#define SWITCH_TWO					7
 // Input Pin Signals
-#define RUBBISH_BIN_LID 	18 		/*  */
-#define RUBBISH_BIN_SENSOR  19 		/*  */
+#define RUBBISH_BIN_LID_SWITCH 		18 		/*  */
+#define RUBBISH_BIN_LEVEL_SENSOR	19 		/*  */
 
-#define MAX_OUTPUTS 		9
-#define MAX_INPUTS 			2
+#define MAX_OUTPUTS 				9
+#define MAX_INPUTS 					6
 
 /* 1000 msec = 1 sec */
-#define SLEEP_TIME_MS 		1000
-#define SLEEP_TIME_S		1000
-#define SLEEP_TIME_HALF_S	500
-#define SLEEP_TIME_QUOTA_S	250
+#define SLEEP_TIME_MS 				1000
+#define SLEEP_TIME_S				1000
+#define SLEEP_TIME_HALF_S			500
+#define SLEEP_TIME_QUOTA_S			250
 
 /* Option 1: by node label */
 #define DEVICE_GPIO0 DT_NODELABEL(gpio0)
@@ -72,7 +72,7 @@ static uint8_t rubbish_bin_lid_status = RUBBISH_BIN_LID_CLOSED;
 static uint32_t output_gpio[MAX_OUTPUTS] = {LED_ONE, LED_TWO, LED_THREE, LED_FOUR, 
 											BUZZER};
 static uint32_t input_gpio[MAX_INPUTS] = {BUTTON_ONE, BUTTON_TWO, SWITCH_ONE, SWITCH_TWO, 
-										  RUBBISH_BIN_SENSOR, RUBBISH_BIN_LID};
+										  RUBBISH_BIN_LEVEL_SENSOR, RUBBISH_BIN_LID_SWITCH};
 // const struct device *gpio_dev;
 const struct device *gpio_dev = DEVICE_DT_GET(DEVICE_GPIO0);
 struct k_timer buzzer_timer;
@@ -718,27 +718,50 @@ void main(void)
 		k_msleep(SLEEP_TIME_MS);
 	}
 
+	/*while (1) 
+	{
+		if(gpio_pin_get(gpio_dev, RUBBISH_BIN_LEVEL_SENSOR) == 0)
+		{
+			while (gpio_pin_get(gpio_dev, RUBBISH_BIN_LEVEL_SENSOR == 0))
+			{
+				gpio_pin_set(gpio_dev, LED_THREE, true);
+			}
+			gpio_pin_set(gpio_dev, RUBBISH_BIN_LEVEL_SENSOR, false);
+		}
+
+		if(gpio_pin_get(gpio_dev, RUBBISH_BIN_LID_SWITCH) == 0)
+		{
+			while (gpio_pin_get(gpio_dev, RUBBISH_BIN_LID_SWITCH) == 0)
+			{
+				gpio_pin_set(gpio_dev, LED_FOUR, true);
+			}
+			gpio_pin_set(gpio_dev, LED_FOUR, false);
+		}
+	}*/
+
+
 	/* Configure the interrupt on the reed switch's pin */
-	err = gpio_pin_interrupt_configure(gpio_dev, BUTTON_ONE, GPIO_INT_LEVEL_INACTIVE);
+	err = gpio_pin_interrupt_configure(gpio_dev, RUBBISH_BIN_LID_SWITCH, GPIO_INT_LEVEL_INACTIVE);
 	if (err < 0)
 	{
 		return;
 	}
 
+
 	/* Configure the interrupt on the distance sensor's pin */
-	err = gpio_pin_interrupt_configure(gpio_dev, BUTTON_TWO, GPIO_INT_LEVEL_INACTIVE);
+	err = gpio_pin_interrupt_configure(gpio_dev, RUBBISH_BIN_LEVEL_SENSOR, GPIO_INT_LEVEL_INACTIVE);
 	if (err < 0)
 	{
 		return;
 	}
 
 	/* Initialize the static struct gpio_callback variable */
-	gpio_init_callback(&rubbish_bin_lid_cb_data, rubbish_bin_lid_interrupt_handler, BIT(BUTTON_ONE));
+	gpio_init_callback(&rubbish_bin_lid_cb_data, rubbish_bin_lid_interrupt_handler, BIT(RUBBISH_BIN_LID_SWITCH));
 	/* Add the callback function by calling gpio_add_callback() */
 	gpio_add_callback(gpio_dev, &rubbish_bin_lid_cb_data);
 
 	/* Initialize the static struct gpio_callback variable */
-	gpio_init_callback(&rubbish_bin_level_cb_data, rubbish_bin_level_interrupt_handler, BIT(BUTTON_TWO));
+	gpio_init_callback(&rubbish_bin_level_cb_data, rubbish_bin_level_interrupt_handler, BIT(RUBBISH_BIN_LEVEL_SENSOR));
 	/* Add the callback function by calling gpio_add_callback() */
 	gpio_add_callback(gpio_dev, &rubbish_bin_level_cb_data);
 
@@ -758,6 +781,10 @@ void main(void)
 	if (err) {
 		LOG_ERR("AWS IoT library could not be initialized, error: %d", err);
 	}
+	else
+	{
+		LOG_ERR("AWS IoT library initialized!");
+	}
 
 	/** Subscribe to customizable non-shadow specific topics
 	 *  to AWS IoT backend.
@@ -765,6 +792,10 @@ void main(void)
 	err = app_topics_subscribe();
 	if (err) {
 		LOG_ERR("Adding application specific topics failed, error: %d", err);
+	}
+	else
+	{
+		LOG_ERR("Application specific topics Added!");
 	}
 
 	work_init();
@@ -774,6 +805,10 @@ void main(void)
 	err = modem_info_init();
 	if (err) {
 		LOG_ERR("Failed initializing modem info module, error: %d", err);
+	}
+	else
+	{
+		LOG_ERR("Modem info module initialized!");
 	}
 
 	k_sem_take(&lte_connected, K_FOREVER);
