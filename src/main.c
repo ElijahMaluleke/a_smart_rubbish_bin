@@ -134,8 +134,9 @@ void rubbish_bin_lid_interrupt_handler(const struct device *dev, struct gpio_cal
 	#endif
 	rubbish_bin_lid_status = RUBBISH_BIN_LID_OPENED;
 	gpio_pin_set(gpio_dev, LED_ONE, true);
+	gpio_pin_set(gpio_dev, BUZZER, true);
 	/* start periodic timer that expires once every second */
-	k_timer_start(&buzzer_timer, K_SECONDS(10), K_NO_WAIT);		
+	k_timer_start(&buzzer_timer, K_SECONDS(3), K_NO_WAIT);		
 }
 
 /*
@@ -155,10 +156,11 @@ void rubbish_bin_level_interrupt_handler(const struct device *dev, struct gpio_c
 /********************************************************************************
  * Define a variable of type static struct gpio_callback
  ********************************************************************************/
-void rubbish_bin_bin_expiry_function(struct k_timer *timer_id)
+void rubbish_bin_lid_expiry_function(struct k_timer *timer_id)
 {
 	rubbish_bin_lid_status = RUBBISH_BIN_LID_CLOSED;
 	gpio_pin_set(gpio_dev, LED_ONE, false);
+	gpio_pin_set(gpio_dev, BUZZER, false);
 }
 
 /********************************************************************************
@@ -732,11 +734,13 @@ void main(void)
 		gpio_pin_set(gpio_dev, LED_TWO, true);
 		gpio_pin_set(gpio_dev, LED_THREE, true);
 		gpio_pin_set(gpio_dev, LED_FOUR, true);
+		gpio_pin_set(gpio_dev, BUZZER, true);
 		k_msleep(SLEEP_TIME_MS);	
 		gpio_pin_set(gpio_dev, LED_ONE, false);
 		gpio_pin_set(gpio_dev, LED_TWO, false);
 		gpio_pin_set(gpio_dev, LED_THREE, false);
 		gpio_pin_set(gpio_dev, LED_FOUR, false);
+		gpio_pin_set(gpio_dev, BUZZER, false);
 		k_msleep(SLEEP_TIME_MS);
 	}
 
@@ -769,7 +773,7 @@ void main(void)
 	gpio_add_callback(gpio_dev, &rubbish_bin_level_cb_data);
 
 	//
-	k_timer_init(&buzzer_timer, rubbish_bin_bin_expiry_function, NULL);
+	k_timer_init(&buzzer_timer, rubbish_bin_lid_expiry_function, NULL);
 	k_timer_init(&rubbish_timer, rubbish_bin_level_expiry_function, NULL);
 	
 	// while (1) {/* code */}
@@ -826,3 +830,5 @@ void main(void)
 	k_sem_take(&date_time_obtained, K_FOREVER);
 	k_work_schedule(&connect_work, K_NO_WAIT);
 }
+
+	 
