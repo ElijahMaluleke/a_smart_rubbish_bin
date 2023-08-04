@@ -27,15 +27,14 @@
 /********************************************************************************
  *
  ********************************************************************************/
-#define DEBUG 						1
-
 #define RUBBISH_BIN_LID_CLOSED		0
 #define RUBBISH_BIN_LID_OPENED		1
 
 
 #define RUBBISH_BIN_EMPTY			0
 #define RUBBISH_BIN_FULL			1
-
+#define RUBBISH_BIN_LID_OPEN_SHORTER	0
+#define RUBBISH_BIN_LID_OPEN_LONGER	1	
 #define COLUMN_1					0
 #define COLUMN_2					1
 
@@ -43,6 +42,8 @@
 #define HIGH 						1
 #define OFF 						0
 #define ON 							1
+#define BUZZER_ON					0
+#define BUZZER_OFF					1
 
 // Output Pin Signals
 #define BUZZER 						17	    /* sig pin of the buzzer */
@@ -59,7 +60,8 @@
 #define RUBBISH_BIN_LEVEL_SENSOR	18 		/*  */
 #define RUBBISH_BIN_LID_SWITCH 		19 		/*  */
 
-#define MAX_OUTPUTS 				9
+#define MAX_OUTPUTS 				5
+#define	OUTPUT_FLAGS				5
 #define MAX_INPUTS 					6
 #define INPUT_FLAGS 				6
 
@@ -75,21 +77,29 @@
 /********************************************************************************
  *
  ********************************************************************************/
+bool rubbish_bin_lid_open_timer_state = 0;
+static uint32_t rubbish_bin_open_counter = 0;
 static uint8_t rubbish_bin_level_status = RUBBISH_BIN_EMPTY;
 static uint8_t rubbish_bin_lid_status = RUBBISH_BIN_LID_CLOSED;
-static uint32_t output_gpio[MAX_OUTPUTS] = {LED_ONE, LED_TWO, LED_THREE, LED_FOUR, 
-											BUZZER};
+static uint32_t output_gpio[MAX_OUTPUTS][OUTPUT_FLAGS] = 
+											{{LED_ONE, GPIO_OUTPUT_INACTIVE}, 
+											{LED_TWO, GPIO_OUTPUT_INACTIVE}, 
+											{LED_THREE, GPIO_OUTPUT_INACTIVE}, 
+											{LED_FOUR, GPIO_OUTPUT_INACTIVE}, 
+											{BUZZER, GPIO_OUTPUT_ACTIVE}};
+
 static uint32_t input_gpio[MAX_INPUTS][INPUT_FLAGS] = 
 											{{BUTTON_ONE, GPIO_PULL_UP}, 
 											{BUTTON_TWO, GPIO_PULL_UP}, 
 											{SWITCH_ONE, GPIO_PULL_UP}, 
 											{SWITCH_TWO, GPIO_PULL_UP}, 
 										  	{RUBBISH_BIN_LEVEL_SENSOR, GPIO_PULL_DOWN}, 
-											{RUBBISH_BIN_LID_SWITCH, GPIO_PULL_UP}};
+											{RUBBISH_BIN_LID_SWITCH, GPIO_PULL_DOWN}};
 // const struct device *gpio_dev;
 const struct device *gpio_dev = DEVICE_DT_GET(DEVICE_GPIO0);
 struct k_timer buzzer_timer;
 struct k_timer rubbish_timer;
+struct k_timer rubbish_bin_lid_open_timer;
 static struct gpio_callback rubbish_bin_lid_cb_data;
 static struct gpio_callback rubbish_bin_level_cb_data;
 
@@ -129,25 +139,30 @@ void configuer_all_outputs(void);
  ********************************************************************************/
 void rubbish_bin_lid_interrupt_handler(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
-	#if DEBUG
-		LOG_INF("Button pressed: %d", pins);
-	#endif
 	rubbish_bin_lid_status = RUBBISH_BIN_LID_OPENED;
+	if(rubbish_bin_lid_open_timer_state == 0) {
+		rubbish_bin_lid_open_timer_state = 1;
+		LOG_INF("Rubbish Bin Lid Open Timer Counter started!");
+		k_timer_start(&rubbish_bin_lid_open_timer, K_SECONDS(5), K_NO_WAIT);
+	}
 	gpio_pin_set(gpio_dev, LED_ONE, true);
-	gpio_pin_set(gpio_dev, BUZZER, true);
+	gpio_pin_set(gpio_dev, BUZZER, BUZZER_ON);
 	/* start periodic timer that expires once every second */
-	k_timer_start(&buzzer_timer, K_SECONDS(3), K_NO_WAIT);		
+	k_timer_start(&buzzer_timer, K_SECONDS(1), K_NO_WAIT);		
 }
 
-/*
+/********************************************************************************
  *
- */
+ ********************************************************************************/
 void rubbish_bin_level_interrupt_handler(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
-	#if DEBUG
-		LOG_INF("Button pressed %d", pins);
-	#endif
-	rubbish_bin_level_status = RUBBISH_BIN_FULL;
+	if(rubbish_bin_lid_status == RUBBISH_BIN_LID_CLOSED) {
+		rubbish_bin_level_status = RUBBISH_BIN_FULL;
+		LOG_INF("Rubbish Bin is Full!");
+	} else {
+		rubbish_bin_level_status = RUBBISH_BIN_EMPTY;
+		LOG_INF("Rubbish Bin is Empty!");
+	}
 	gpio_pin_set(gpio_dev, LED_TWO, true);
 	/* start periodic timer that expires once every second */
 	k_timer_start(&rubbish_timer, K_SECONDS(5), K_NO_WAIT);
@@ -158,9 +173,26 @@ void rubbish_bin_level_interrupt_handler(const struct device *dev, struct gpio_c
  ********************************************************************************/
 void rubbish_bin_lid_expiry_function(struct k_timer *timer_id)
 {
-	rubbish_bin_lid_status = RUBBISH_BIN_LID_CLOSED;
+	//k_timer_stop(&rubbish_bin_lid_open_timer);
 	gpio_pin_set(gpio_dev, LED_ONE, false);
-	gpio_pin_set(gpio_dev, BUZZER, false);
+	gpio_pin_set(gpio_dev, BUZZER, BUZZER_OFF);
+	rubbish_bin_lid_status = RUBBISH_BIN_LID_CLOSED;
+}
+
+/*
+ *
+ */
+void rubbish_bin_lid_open_timer_expiry_function(struct k_timer *timer_id)
+{
+	rubbish_bin_open_counter += 5;
+	if(rubbish_bin_lid_status == RUBBISH_BIN_LID_CLOSED) {
+		rubbish_bin_lid_open_timer_state = 0;
+		//k_timer_stop(&rubbish_bin_lid_open_timer);
+		LOG_INF("The Rubbish Bin Lid is now closed!");
+	} else {
+		LOG_INF("Rubbish Bin Lid Open Counter: %d seconds", rubbish_bin_open_counter);
+		k_timer_start(&rubbish_bin_lid_open_timer, K_SECONDS(5), K_NO_WAIT);
+	}
 }
 
 /********************************************************************************
@@ -168,7 +200,6 @@ void rubbish_bin_lid_expiry_function(struct k_timer *timer_id)
  ********************************************************************************/
 void rubbish_bin_level_expiry_function(struct k_timer *timer_id)
 {
-	rubbish_bin_level_status = RUBBISH_BIN_EMPTY;
 	gpio_pin_set(gpio_dev, LED_TWO, false);
 }
 
@@ -185,7 +216,7 @@ void configuer_all_outputs(void)
 			return;
 		}
 
-		err = gpio_pin_configure(gpio_dev, output_gpio[i], GPIO_OUTPUT_INACTIVE);
+		err = gpio_pin_configure(gpio_dev, output_gpio[i][COLUMN_1], output_gpio[i][COLUMN_2]);
 		if (err < 0)
 		{
 			return;
@@ -230,7 +261,7 @@ static int json_add_obj(cJSON *parent, const char *str, cJSON *item)
 {
 	cJSON_AddItemToObject(parent, str, item);
 
-	return 0;
+	return 0;		
 }
 
 /********************************************************************************
@@ -734,13 +765,13 @@ void main(void)
 		gpio_pin_set(gpio_dev, LED_TWO, true);
 		gpio_pin_set(gpio_dev, LED_THREE, true);
 		gpio_pin_set(gpio_dev, LED_FOUR, true);
-		gpio_pin_set(gpio_dev, BUZZER, true);
+		gpio_pin_set(gpio_dev, BUZZER, BUZZER_ON);
 		k_msleep(SLEEP_TIME_MS);	
 		gpio_pin_set(gpio_dev, LED_ONE, false);
 		gpio_pin_set(gpio_dev, LED_TWO, false);
 		gpio_pin_set(gpio_dev, LED_THREE, false);
 		gpio_pin_set(gpio_dev, LED_FOUR, false);
-		gpio_pin_set(gpio_dev, BUZZER, false);
+		gpio_pin_set(gpio_dev, BUZZER, BUZZER_OFF);
 		k_msleep(SLEEP_TIME_MS);
 	}
 
@@ -756,7 +787,7 @@ void main(void)
 
 
 	/* Configure the interrupt on the distance sensor's pin */
-	err = gpio_pin_interrupt_configure(gpio_dev, RUBBISH_BIN_LEVEL_SENSOR, GPIO_INT_LEVEL_ACTIVE);
+	err = gpio_pin_interrupt_configure(gpio_dev, RUBBISH_BIN_LEVEL_SENSOR, GPIO_INT_LEVEL_INACTIVE);
 	if (err < 0)
 	{
 		return;
@@ -775,7 +806,7 @@ void main(void)
 	//
 	k_timer_init(&buzzer_timer, rubbish_bin_lid_expiry_function, NULL);
 	k_timer_init(&rubbish_timer, rubbish_bin_level_expiry_function, NULL);
-	
+	k_timer_init(&rubbish_bin_lid_open_timer, rubbish_bin_lid_open_timer_expiry_function, NULL);
 	// while (1) {/* code */}
 	
 	cJSON_Init();
