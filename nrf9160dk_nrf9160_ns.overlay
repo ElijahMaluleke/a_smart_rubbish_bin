@@ -25,3 +25,18 @@
 /*&nrf_interface_pins_0_2_routing {
     status = "okay";
 };*/
+
+/*
+&dppic {
+    status = "okay";
+};
+
+&timer0 {
+    status = "okay";
+};
+
+&gpiote {
+    status = "okay";
+};
+
+ */
