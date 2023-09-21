@@ -31,13 +31,12 @@
 
 #include <nrfx_systick.h>
 
-//
-#define TRIG 					21 // Output pin
-#define ECHO 					18 // Input pin
-
 /********************************************************************************
  *
  ********************************************************************************/
+#define TRIG 					21 // Output pin
+#define ECHO 					18 // Input pin
+
 #define RUBBISH_BIN_LID_CLOSED		0
 #define RUBBISH_BIN_LID_OPENED		1
 
@@ -144,6 +143,148 @@ static int modem_lib_init_result = -1;
  ********************************************************************************/
 void configuer_all_inputs(void);
 void configuer_all_outputs(void);
+
+/** @brief Symbol specifying timer instance to be used. */
+#define TIMER_INST_IDX 		0
+
+/** @brief Symbol specifying time in milliseconds to wait for handler execution. */
+#define TIME_TO_WAIT_MS 	500
+
+// counter
+static volatile uint32_t tCount = 0;
+
+// count to us (micro seconds) conversion factor
+// set in start_timer()
+static volatile float countToUs = 1;
+
+/********************************************************************************
+ *
+ ********************************************************************************/
+static void timer_handler(nrf_timer_event_t event_type, void * p_context)
+{
+	if(event_type == NRF_TIMER_EVENT_COMPARE0)
+    {
+        char * p_msg = p_context;
+				// clear compare register event
+		NRF_TIMER0->EVENTS_COMPARE[0] = 0;
+		//LOG_INF("Timer count: >%d<", tCount);
+		// increment count
+		tCount++;
+        //LOG_INF("Timer finished. Context passed to the handler: >%s<", p_msg);
+    }
+
+	/*if(NRF_TIMER0->EVENTS_COMPARE[0] && NRF_TIMER0->INTENSET & TIMER_INTENSET_COMPARE0_Msk) {
+
+		// clear compare register event
+		NRF_TIMER0->EVENTS_COMPARE[0] = 0;
+		LOG_INF("Timer count: >%d<", tCount);
+		// increment count
+		tCount++;
+	}*/
+}
+
+/********************************************************************************
+ * Stop Timer1
+ ********************************************************************************/
+void stop_timer(void)
+{
+	NRF_TIMER1->TASKS_STOP = 1;
+}
+
+/********************************************************************************
+ * Set up and start Timer1
+ ********************************************************************************/
+void start_timer(void)
+{
+	uint8_t prescaler = 0;
+	uint16_t comp1 = 500;
+	NRF_TIMER0->MODE = TIMER_MODE_MODE_Timer;
+	NRF_TIMER0->TASKS_CLEAR = 1;
+	NRF_TIMER0->PRESCALER = prescaler;
+	NRF_TIMER0->BITMODE = TIMER_BITMODE_BITMODE_16Bit;
+	// set compare
+	NRF_TIMER0->CC[0] = comp1;
+	// set conversion factor
+	countToUs = 0.0625*comp1*(1 << prescaler);
+	printf("timer tick = %f us\n", countToUs);
+	// enable compare 1
+	NRF_TIMER0->INTENSET = (TIMER_INTENSET_COMPARE0_Enabled << TIMER_INTENSET_COMPARE0_Pos);
+	// use the shorts register to clear compare 1
+	NRF_TIMER0->SHORTS = (TIMER_SHORTS_COMPARE0_CLEAR_Enabled << TIMER_SHORTS_COMPARE1_CLEAR_Pos);
+	// enable IRQ
+	//NVIC_EnableIRQ(TIMER1_IRQn);
+	// start timer
+	NRF_TIMER0->TASKS_START = 1;
+}
+
+/********************************************************************************
+ * @brief Function for application main entry.
+ *
+ * @return Nothing.
+ ********************************************************************************/
+void app_timer_init(void)
+{
+	uint32_t desired_ticks;
+    nrfx_err_t status;
+    (void)status;
+
+    nrfx_timer_t timer_inst = NRFX_TIMER_INSTANCE(TIMER_INST_IDX);
+    nrfx_timer_config_t config = NRFX_TIMER_DEFAULT_CONFIG;
+    config.mode = NRF_TIMER_MODE_TIMER;
+	config.bit_width = NRF_TIMER_BIT_WIDTH_16;
+	config.frequency = NRF_TIMER_FREQ_16MHz;
+	config.interrupt_priority = NRFX_TIMER_DEFAULT_CONFIG_IRQ_PRIORITY;
+    config.p_context = "Timer Zero";
+
+    status = nrfx_timer_init(&timer_inst, &config, timer_handler);
+    NRFX_ASSERT(status == NRFX_SUCCESS);
+
+	#if defined(__ZEPHYR__)
+    	#define TIMER_INST         NRFX_CONCAT_2(NRF_TIMER, TIMER_INST_IDX)
+    	#define TIMER_INST_HANDLER NRFX_CONCAT_3(nrfx_timer_, TIMER_INST_IDX, _irq_handler)
+    	IRQ_DIRECT_CONNECT(NRFX_IRQ_NUMBER_GET(TIMER_INST), IRQ_PRIO_LOWEST, TIMER_INST_HANDLER, 0);
+	#endif
+
+    nrfx_timer_clear(&timer_inst);
+    nrfx_timer_extended_compare(&timer_inst, 
+								 NRF_TIMER_CC_CHANNEL0, 
+								 TIME_TO_WAIT_MS,
+                                 TIMER_SHORTS_COMPARE0_CLEAR_Msk, 
+								 true);
+
+    nrfx_timer_enable(&timer_inst);
+    LOG_INF("Timer status: %s", nrfx_timer_is_enabled(&timer_inst) ? "enabled" : "disabled");
+}
+
+/********************************************************************************
+ * @} 
+ ********************************************************************************/
+bool getDistance(float* dist)
+{
+	gpio_pin_set(gpio_dev, TRIG, true);
+	nrfx_systick_delay_us(20);
+	gpio_pin_set(gpio_dev, TRIG, false);
+	nrfx_systick_delay_us(12);
+	gpio_pin_set(gpio_dev, TRIG, true);
+	nrfx_systick_delay_us(20);
+   
+	while(!gpio_pin_get(gpio_dev, ECHO));
+	// reset counter
+	tCount = 0;
+	// wait till Echo pin goes low
+	while(gpio_pin_get(gpio_dev, ECHO));
+	float duration = countToUs*tCount;
+	float distance = duration*0.017;
+
+	if(distance < 400.0) {
+		// save
+		*dist = distance;
+		return true;
+	}
+	else {
+		return false;
+	}
+}
 
 /********************************************************************************
  * Define the callback function
@@ -756,153 +897,6 @@ static void date_time_event_handler(const struct date_time_evt *evt)
 	}
 }
 
-/** @brief Symbol specifying timer instance to be used. */
-#define TIMER_INST_IDX 		0
-
-/** @brief Symbol specifying time in milliseconds to wait for handler execution. */
-#define TIME_TO_WAIT_MS 	500
-
-// counter
-static volatile uint32_t tCount = 0;
-
-// count to us (micro seconds) conversion factor
-// set in start_timer()
-static volatile float countToUs = 1;
-
-/********************************************************************************
- *
- ********************************************************************************/
-static void timer_handler(nrf_timer_event_t event_type, void * p_context)
-{
-	if(event_type == NRF_TIMER_EVENT_COMPARE0)
-    {
-        char * p_msg = p_context;
-				// clear compare register event
-		NRF_TIMER0->EVENTS_COMPARE[0] = 0;
-		//LOG_INF("Timer count: >%d<", tCount);
-		// increment count
-		tCount++;
-        //LOG_INF("Timer finished. Context passed to the handler: >%s<", p_msg);
-    }
-
-	/*if(NRF_TIMER0->EVENTS_COMPARE[0] && NRF_TIMER0->INTENSET & TIMER_INTENSET_COMPARE0_Msk) {
-
-		// clear compare register event
-		NRF_TIMER0->EVENTS_COMPARE[0] = 0;
-		LOG_INF("Timer count: >%d<", tCount);
-		// increment count
-		tCount++;
-	}*/
-}
-
-/********************************************************************************
- * Stop Timer1
- ********************************************************************************/
-void stop_timer(void)
-{
-	NRF_TIMER1->TASKS_STOP = 1;
-}
-
-/********************************************************************************
- * Set up and start Timer1
- ********************************************************************************/
-void start_timer(void)
-{
-	uint8_t prescaler = 0;
-	uint16_t comp1 = 500;
-	NRF_TIMER0->MODE = TIMER_MODE_MODE_Timer;
-	NRF_TIMER0->TASKS_CLEAR = 1;
-	NRF_TIMER0->PRESCALER = prescaler;
-	NRF_TIMER0->BITMODE = TIMER_BITMODE_BITMODE_16Bit;
-	// set compare
-	NRF_TIMER0->CC[0] = comp1;
-	// set conversion factor
-	countToUs = 0.0625*comp1*(1 << prescaler);
-	printf("timer tick = %f us\n", countToUs);
-	// enable compare 1
-	NRF_TIMER0->INTENSET = (TIMER_INTENSET_COMPARE0_Enabled << TIMER_INTENSET_COMPARE0_Pos);
-	// use the shorts register to clear compare 1
-	NRF_TIMER0->SHORTS = (TIMER_SHORTS_COMPARE0_CLEAR_Enabled << TIMER_SHORTS_COMPARE1_CLEAR_Pos);
-	// enable IRQ
-	//NVIC_EnableIRQ(TIMER1_IRQn);
-	// start timer
-	NRF_TIMER0->TASKS_START = 1;
-}
-
-/********************************************************************************
- * @brief Function for application main entry.
- *
- * @return Nothing.
- ********************************************************************************/
-void app_timer_init(void)
-{
-	uint32_t desired_ticks;
-    nrfx_err_t status;
-    (void)status;
-
-    nrfx_timer_t timer_inst = NRFX_TIMER_INSTANCE(TIMER_INST_IDX);
-    nrfx_timer_config_t config = NRFX_TIMER_DEFAULT_CONFIG;
-    config.mode = NRF_TIMER_MODE_TIMER;
-	config.bit_width = NRF_TIMER_BIT_WIDTH_16;
-	config.frequency = NRF_TIMER_FREQ_16MHz;
-	config.interrupt_priority = NRFX_TIMER_DEFAULT_CONFIG_IRQ_PRIORITY;
-    config.p_context = "Timer Zero";
-
-    status = nrfx_timer_init(&timer_inst, &config, timer_handler);
-    NRFX_ASSERT(status == NRFX_SUCCESS);
-
-	#if defined(__ZEPHYR__)
-    	#define TIMER_INST         NRFX_CONCAT_2(NRF_TIMER, TIMER_INST_IDX)
-    	#define TIMER_INST_HANDLER NRFX_CONCAT_3(nrfx_timer_, TIMER_INST_IDX, _irq_handler)
-    	IRQ_DIRECT_CONNECT(NRFX_IRQ_NUMBER_GET(TIMER_INST), IRQ_PRIO_LOWEST, TIMER_INST_HANDLER, 0);
-	#endif
-
-    nrfx_timer_clear(&timer_inst);
-
-    /*
-     * Setting the timer channel NRF_TIMER_CC_CHANNEL0 in the extended compare mode to stop the timer and
-     * trigger an interrupt if internal counter register is equal to desired_ticks.
-     */
-    nrfx_timer_extended_compare(&timer_inst, 
-								 NRF_TIMER_CC_CHANNEL0, 
-								 TIME_TO_WAIT_MS,
-                                 TIMER_SHORTS_COMPARE0_CLEAR_Msk, 
-								 true);
-
-    nrfx_timer_enable(&timer_inst);
-    LOG_INF("Timer status: %s", nrfx_timer_is_enabled(&timer_inst) ? "enabled" : "disabled");
-}
-
-/********************************************************************************
- * @} 
- ********************************************************************************/
-bool getDistance(float* dist)
-{
-	gpio_pin_set(gpio_dev, TRIG, true);
-	nrfx_systick_delay_us(20);
-	gpio_pin_set(gpio_dev, TRIG, false);
-	nrfx_systick_delay_us(12);
-	gpio_pin_set(gpio_dev, TRIG, true);
-	nrfx_systick_delay_us(20);
-   
-	while(!gpio_pin_get(gpio_dev, ECHO));
-	// reset counter
-	tCount = 0;
-	// wait till Echo pin goes low
-	while(gpio_pin_get(gpio_dev, ECHO));
-	float duration = countToUs*tCount;
-	float distance = duration*0.017;
-
-	if(distance < 400.0) {
-		// save
-		*dist = distance;
-		return true;
-	}
-	else {
-		return false;
-	}
-}
-
 /********************************************************************************
  * 
  ********************************************************************************/
@@ -952,14 +946,14 @@ void main(void)
 	}
 	
 	// set up timers
-	app_timer_init();
+	//app_timer_init();
 	//
-	start_timer();
+	//start_timer();
 	// prints to serial port
 	LOG_INF("starting...\n");
 
 	// main loop:
-	while(1) {
+	/*while(1) {
 		// get HC-SR04 distance
 		float dist;
 		LOG_INF("Get Distance...\n");
@@ -969,7 +963,7 @@ void main(void)
 		}
 		// delay
 		k_msleep(250);
-	}
+	}*/
 
 	//
 	gpio_pin_set(gpio_dev, LED_THREE, true);
@@ -981,13 +975,12 @@ void main(void)
 		return;
 	}
 
-
 	/* Configure the interrupt on the distance sensor's pin */
-	err = gpio_pin_interrupt_configure(gpio_dev, RUBBISH_BIN_LEVEL_SENSOR, GPIO_INT_LEVEL_INACTIVE);
+	/*err = gpio_pin_interrupt_configure(gpio_dev, RUBBISH_BIN_LEVEL_SENSOR, GPIO_INT_LEVEL_INACTIVE);
 	if (err < 0)
 	{
 		return;
-	}
+	}*/
 
 	/* Initialize the static struct gpio_callback variable */
 	gpio_init_callback(&rubbish_bin_lid_cb_data, rubbish_bin_lid_interrupt_handler, BIT(RUBBISH_BIN_LID_SWITCH));
@@ -995,15 +988,14 @@ void main(void)
 	gpio_add_callback(gpio_dev, &rubbish_bin_lid_cb_data);
 
 	/* Initialize the static struct gpio_callback variable */
-	gpio_init_callback(&rubbish_bin_level_cb_data, rubbish_bin_level_interrupt_handler, BIT(RUBBISH_BIN_LEVEL_SENSOR));
+	//gpio_init_callback(&rubbish_bin_level_cb_data, rubbish_bin_level_interrupt_handler, BIT(RUBBISH_BIN_LEVEL_SENSOR));
 	/* Add the callback function by calling gpio_add_callback() */
-	gpio_add_callback(gpio_dev, &rubbish_bin_level_cb_data);
+	//gpio_add_callback(gpio_dev, &rubbish_bin_level_cb_data);
 
 	//
 	k_timer_init(&buzzer_timer, rubbish_bin_lid_expiry_function, NULL);
-	k_timer_init(&rubbish_timer, rubbish_bin_level_expiry_function, NULL);
+	//k_timer_init(&rubbish_timer, rubbish_bin_level_expiry_function, NULL);
 	k_timer_init(&rubbish_bin_lid_open_timer, rubbish_bin_lid_open_timer_expiry_function, NULL);
-	// while (1) {/* code */}
 	
 	cJSON_Init();
 
