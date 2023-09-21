@@ -138,12 +138,6 @@ NRF_MODEM_LIB_ON_INIT(aws_iot_init_hook, on_modem_lib_init, NULL);
 /* Initialized to value different than success (0) */
 static int modem_lib_init_result = -1;
 
-/********************************************************************************
- *
- ********************************************************************************/
-void configuer_all_inputs(void);
-void configuer_all_outputs(void);
-
 /** @brief Symbol specifying timer instance to be used. */
 #define TIMER_INST_IDX 		0
 
@@ -156,6 +150,18 @@ static volatile uint32_t tCount = 0;
 // count to us (micro seconds) conversion factor
 // set in start_timer()
 static volatile float countToUs = 1;
+
+static float dist;
+
+uint8_t prescaler = 0;
+uint16_t comp1 = 500;
+
+/********************************************************************************
+ *
+ ********************************************************************************/
+void configuer_all_inputs(void);
+void configuer_all_outputs(void);
+bool getDistance(float* dist);
 
 /********************************************************************************
  *
@@ -196,16 +202,12 @@ void stop_timer(void)
  ********************************************************************************/
 void start_timer(void)
 {
-	uint8_t prescaler = 0;
-	uint16_t comp1 = 500;
 	NRF_TIMER0->MODE = TIMER_MODE_MODE_Timer;
 	NRF_TIMER0->TASKS_CLEAR = 1;
 	NRF_TIMER0->PRESCALER = prescaler;
 	NRF_TIMER0->BITMODE = TIMER_BITMODE_BITMODE_16Bit;
 	// set compare
 	NRF_TIMER0->CC[0] = comp1;
-	// set conversion factor
-	countToUs = 0.0625*comp1*(1 << prescaler);
 	printf("timer tick = %f us\n", countToUs);
 	// enable compare 1
 	NRF_TIMER0->INTENSET = (TIMER_INTENSET_COMPARE0_Enabled << TIMER_INTENSET_COMPARE0_Pos);
@@ -261,6 +263,8 @@ void app_timer_init(void)
  ********************************************************************************/
 bool getDistance(float* dist)
 {
+	// set conversion factor
+	countToUs = 0.0625*comp1*(1 << prescaler);
 	gpio_pin_set(gpio_dev, TRIG, true);
 	nrfx_systick_delay_us(20);
 	gpio_pin_set(gpio_dev, TRIG, false);
@@ -273,6 +277,7 @@ bool getDistance(float* dist)
 	tCount = 0;
 	// wait till Echo pin goes low
 	while(gpio_pin_get(gpio_dev, ECHO));
+	tCount = 10;
 	float duration = countToUs*tCount;
 	float distance = duration*0.017;
 
@@ -342,6 +347,15 @@ void rubbish_bin_lid_open_timer_expiry_function(struct k_timer *timer_id)
 		rubbish_bin_open_counter = 0;
 		//k_timer_stop(&rubbish_bin_lid_open_timer);
 		LOG_INF("The Rubbish Bin Lid is now closed!");
+		// get HC-SR04 distance
+		LOG_INF("Get Distance...\n");
+		if(getDistance(&dist)) {
+			// enable to print to serial port
+			//printf("dist = %f cm\n", dist);
+			LOG_INF("dist = %d cm\n", (uint32_t)dist);
+		}
+		// delay
+		//k_msleep(250);
 	} else {
 		LOG_INF("Rubbish Bin Lid Open Counter: %d seconds", rubbish_bin_open_counter);
 		k_timer_start(&rubbish_bin_lid_open_timer, K_SECONDS(5), K_NO_WAIT);
