@@ -309,23 +309,6 @@ void rubbish_bin_lid_interrupt_handler(const struct device *dev, struct gpio_cal
 }
 
 /********************************************************************************
- *
- ********************************************************************************/
-void rubbish_bin_level_interrupt_handler(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
-{
-	if(rubbish_bin_lid_status == RUBBISH_BIN_LID_CLOSED) {
-		rubbish_bin_level_status = RUBBISH_BIN_FULL;
-		LOG_INF("Rubbish Bin is Full!");
-	} else {
-		rubbish_bin_level_status = RUBBISH_BIN_EMPTY;
-		LOG_INF("Rubbish Bin is Empty!");
-	}
-	gpio_pin_set(gpio_dev, LED_TWO, true);
-	/* start periodic timer that expires once every second */
-	k_timer_start(&rubbish_timer, K_SECONDS(5), K_NO_WAIT);
-}
-
-/********************************************************************************
  * Define a variable of type static struct gpio_callback
  ********************************************************************************/
 void rubbish_bin_lid_expiry_function(struct k_timer *timer_id)
@@ -336,26 +319,22 @@ void rubbish_bin_lid_expiry_function(struct k_timer *timer_id)
 	rubbish_bin_lid_status = RUBBISH_BIN_LID_CLOSED;
 }
 
-/*
+/********************************************************************************
  *
- */
+ ********************************************************************************/
 void rubbish_bin_lid_open_timer_expiry_function(struct k_timer *timer_id)
 {
 	rubbish_bin_open_counter += 5;
 	if(rubbish_bin_lid_status == RUBBISH_BIN_LID_CLOSED) {
 		rubbish_bin_lid_open_timer_state = 0;
 		rubbish_bin_open_counter = 0;
-		//k_timer_stop(&rubbish_bin_lid_open_timer);
 		LOG_INF("The Rubbish Bin Lid is now closed!");
 		// get HC-SR04 distance
-		LOG_INF("Get Distance...\n");
+		LOG_INF("Get Rubbish Bin Level...\n");
 		if(getDistance(&dist)) {
 			// enable to print to serial port
-			//printf("dist = %f cm\n", dist);
-			LOG_INF("dist = %d cm\n", (uint32_t)dist);
+			LOG_INF("Rubbish Bin Level = %d cm\n", (uint32_t)dist);
 		}
-		// delay
-		//k_msleep(250);
 	} else {
 		LOG_INF("Rubbish Bin Lid Open Counter: %d seconds", rubbish_bin_open_counter);
 		k_timer_start(&rubbish_bin_lid_open_timer, K_SECONDS(5), K_NO_WAIT);
@@ -966,19 +945,6 @@ void main(void)
 	// prints to serial port
 	LOG_INF("starting...\n");
 
-	// main loop:
-	/*while(1) {
-		// get HC-SR04 distance
-		float dist;
-		LOG_INF("Get Distance...\n");
-		if(getDistance(&dist)) {
-			// enable to print to serial port
-			printf("dist = %f cm\n", dist);
-		}
-		// delay
-		k_msleep(250);
-	}*/
-
 	//
 	gpio_pin_set(gpio_dev, LED_THREE, true);
 
@@ -989,26 +955,13 @@ void main(void)
 		return;
 	}
 
-	/* Configure the interrupt on the distance sensor's pin */
-	/*err = gpio_pin_interrupt_configure(gpio_dev, RUBBISH_BIN_LEVEL_SENSOR, GPIO_INT_LEVEL_INACTIVE);
-	if (err < 0)
-	{
-		return;
-	}*/
-
 	/* Initialize the static struct gpio_callback variable */
 	gpio_init_callback(&rubbish_bin_lid_cb_data, rubbish_bin_lid_interrupt_handler, BIT(RUBBISH_BIN_LID_SWITCH));
 	/* Add the callback function by calling gpio_add_callback() */
 	gpio_add_callback(gpio_dev, &rubbish_bin_lid_cb_data);
 
-	/* Initialize the static struct gpio_callback variable */
-	//gpio_init_callback(&rubbish_bin_level_cb_data, rubbish_bin_level_interrupt_handler, BIT(RUBBISH_BIN_LEVEL_SENSOR));
-	/* Add the callback function by calling gpio_add_callback() */
-	//gpio_add_callback(gpio_dev, &rubbish_bin_level_cb_data);
-
 	//
 	k_timer_init(&buzzer_timer, rubbish_bin_lid_expiry_function, NULL);
-	//k_timer_init(&rubbish_timer, rubbish_bin_level_expiry_function, NULL);
 	k_timer_init(&rubbish_bin_lid_open_timer, rubbish_bin_lid_open_timer_expiry_function, NULL);
 	
 	cJSON_Init();
@@ -1026,9 +979,10 @@ void main(void)
 		LOG_ERR("AWS IoT library initialized!");
 	}
 
-	/** Subscribe to customizable non-shadow specific topics
+	/*------------------------------------------------------------ 
+	 * Subscribe to customizable non-shadow specific topics
 	 *  to AWS IoT backend.
-	 */
+	 -------------------------------------------------------------*/
 	err = app_topics_subscribe();
 	if (err) {
 		LOG_ERR("Adding application specific topics failed, error: %d", err);
@@ -1054,9 +1008,10 @@ void main(void)
 	k_sem_take(&lte_connected, K_FOREVER);
 #endif
 
-	/** Trigger a date time update. The date_time API is used to timestamp data that is sent
+	/*--------------------------------------------------------------------------- 
+	 * Trigger a date time update. The date_time API is used to timestamp data that is sent
 	 *  to AWS IoT.
-	 */
+	 ---------------------------------------------------------------------------*/
 	date_time_update_async(date_time_event_handler);
 
 	/* Postpone connecting to AWS IoT until date time has been obtained. */
@@ -1064,4 +1019,6 @@ void main(void)
 	k_work_schedule(&connect_work, K_NO_WAIT);
 }
 
-	 
+/********************************************************************************
+ * 
+ ********************************************************************************/
