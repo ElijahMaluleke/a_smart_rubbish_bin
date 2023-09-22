@@ -34,12 +34,11 @@
 /********************************************************************************
  *
  ********************************************************************************/
-#define TRIG 					21 // Output pin
-#define ECHO 					18 // Input pin
+#define TRIG 						21 // Output pin
+#define ECHO 						18 // Input pin
 
 #define RUBBISH_BIN_LID_CLOSED		0
 #define RUBBISH_BIN_LID_OPENED		1
-
 
 #define RUBBISH_BIN_EMPTY			0
 #define RUBBISH_BIN_FULL			1
@@ -65,6 +64,12 @@
 #define BUTTON_TWO					7
 #define SWITCH_ONE					6
 #define SWITCH_TWO					7
+
+//
+#define LED0_GPIO_PIN 					2
+#define LED1_GPIO_PIN			 		3
+#define LED2_GPIO_PIN					4
+#define LED3_GPIO_PIN					5
 
 // Input Pin Signals
 #define RUBBISH_BIN_LEVEL_SENSOR	18 		/*  */
@@ -137,22 +142,16 @@ NRF_MODEM_LIB_ON_INIT(aws_iot_init_hook, on_modem_lib_init, NULL);
 
 /* Initialized to value different than success (0) */
 static int modem_lib_init_result = -1;
-
 /** @brief Symbol specifying timer instance to be used. */
 #define TIMER_INST_IDX 		0
-
 /** @brief Symbol specifying time in milliseconds to wait for handler execution. */
 #define TIME_TO_WAIT_MS 	500
-
 // counter
 static volatile uint32_t tCount = 0;
-
 // count to us (micro seconds) conversion factor
 // set in start_timer()
 static volatile float countToUs = 1;
-
 static float dist;
-
 uint8_t prescaler = 0;
 uint16_t comp1 = 500;
 
@@ -162,6 +161,59 @@ uint16_t comp1 = 500;
 void configuer_all_inputs(void);
 void configuer_all_outputs(void);
 bool getDistance(float* dist);
+void timer1_init(void);
+int dk_leds_init(void);
+
+/********************************************************************************
+ *
+ ********************************************************************************/
+static const uint8_t led_pins[] = { LED0_GPIO_PIN, LED1_GPIO_PIN, LED2_GPIO_PIN,
+				 				    LED3_GPIO_PIN };
+
+ISR_DIRECT_DECLARE(timer1_handler)
+{
+	static bool toggle_in_isr;
+	if (NRF_TIMER1_NS->EVENTS_COMPARE[0])
+	{
+		NRF_TIMER1_NS->EVENTS_COMPARE[0] = 0;
+		toggle_in_isr = !toggle_in_isr;
+		(void)gpio_pin_set(gpio_dev, led_pins[1], toggle_in_isr);
+		tCount++;
+	}
+	ISR_DIRECT_PM();
+	return 1;
+}
+
+void timer1_init(void)
+{
+	IRQ_DIRECT_CONNECT(TIMER1_IRQn, IRQ_PRIO_LOWEST, timer1_handler, 0);
+	irq_enable(TIMER1_IRQn);
+	NRF_TIMER1_NS->PRESCALER = 8;	
+	NRF_TIMER1_NS->CC[0] = 50000;
+	NRF_TIMER1_NS->SHORTS = TIMER_SHORTS_COMPARE0_CLEAR_Enabled << TIMER_SHORTS_COMPARE0_CLEAR_Pos;
+	NRF_TIMER1_NS->INTENSET = TIMER_INTENSET_COMPARE0_Enabled << TIMER_INTENSET_COMPARE0_Pos;
+	NRF_TIMER1_NS->TASKS_START = 1;
+}
+
+int dk_leds_init(void)
+{
+	int err = 0;
+	
+	if (!gpio_dev) {
+		printk("Cannot bind gpio device");
+		return -ENODEV;
+	}
+
+	for (size_t i = 0; i < ARRAY_SIZE(led_pins); i++) {
+		err = gpio_pin_configure(gpio_dev, led_pins[i], GPIO_OUTPUT_INACTIVE);
+
+		if (err) {
+			printk("Cannot configure LED gpio");
+			return err;
+		}
+	}
+	return err;
+}
 
 /********************************************************************************
  *
@@ -900,6 +952,15 @@ void main(void)
 
 	nrfx_systick_init();
 	LOG_INF("A Smart Rubbish Bin Collection IoT application started, version: %s", CONFIG_APP_VERSION);
+
+	timer1_init();
+	dk_leds_init();
+
+	while(1)
+	{
+		LOG_INF("tCount: %d", tCount);
+		k_msleep(SLEEP_TIME_MS);
+	}
 
 	configuer_all_outputs();
 	configuer_all_inputs();
