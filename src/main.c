@@ -142,18 +142,18 @@ NRF_MODEM_LIB_ON_INIT(aws_iot_init_hook, on_modem_lib_init, NULL);
 
 /* Initialized to value different than success (0) */
 static int modem_lib_init_result = -1;
-/** @brief Symbol specifying timer instance to be used. */
-#define TIMER_INST_IDX 		0
-/** @brief Symbol specifying time in milliseconds to wait for handler execution. */
-#define TIME_TO_WAIT_MS 	500
+
 // counter
-static volatile uint32_t tCount = 0;
+//static volatile uint32_t tCount = 0;
+uint32_t tCount = 0;
 // count to us (micro seconds) conversion factor
 // set in start_timer()
 static volatile float countToUs = 1;
 static float dist;
-uint8_t prescaler = 0;
+uint8_t prescaler = 1;
+//uint8_t prescaler = 8;
 uint16_t comp1 = 500;
+//uint16_t comp1 = 25000;
 
 /********************************************************************************
  *
@@ -163,42 +163,63 @@ void configuer_all_outputs(void);
 bool getDistance(float* dist);
 void timer1_init(void);
 int dk_leds_init(void);
+void set_conversion_factor(void);
 
 /********************************************************************************
  *
  ********************************************************************************/
+// set conversion factor
+void set_conversion_factor(void)
+{
+	countToUs = 0.0625*comp1*(1 << prescaler);
+}
+
+/********************************************************************************
+ *
+ ********************************************************************************/
+const uint8_t pins = 4;
 static const uint8_t led_pins[] = { LED0_GPIO_PIN, LED1_GPIO_PIN, LED2_GPIO_PIN,
 				 				    LED3_GPIO_PIN };
 
 ISR_DIRECT_DECLARE(timer1_handler)
 {
-	static bool toggle_in_isr;
-	if (NRF_TIMER1_NS->EVENTS_COMPARE[0])
+	if (NRF_TIMER1_NS->EVENTS_COMPARE[1] && (NRF_TIMER1_NS->INTENSET) & (TIMER_INTENSET_COMPARE1_Msk))
 	{
-		NRF_TIMER1_NS->EVENTS_COMPARE[0] = 0;
-		toggle_in_isr = !toggle_in_isr;
-		(void)gpio_pin_set(gpio_dev, led_pins[1], toggle_in_isr);
+		NRF_TIMER1_NS->TASKS_CLEAR = 1;
+		NRF_TIMER1_NS->EVENTS_COMPARE[1] = 0;
 		tCount++;
+		//LOG_INF("Timer count: >%d<", tCount);
 	}
 	ISR_DIRECT_PM();
 	return 1;
 }
 
+/********************************************************************************
+ * Set up and start Timer1
+ ********************************************************************************/
 void timer1_init(void)
 {
 	IRQ_DIRECT_CONNECT(TIMER1_IRQn, IRQ_PRIO_LOWEST, timer1_handler, 0);
 	irq_enable(TIMER1_IRQn);
-	NRF_TIMER1_NS->PRESCALER = 8;	
-	NRF_TIMER1_NS->CC[0] = 50000;
-	NRF_TIMER1_NS->SHORTS = TIMER_SHORTS_COMPARE0_CLEAR_Enabled << TIMER_SHORTS_COMPARE0_CLEAR_Pos;
-	NRF_TIMER1_NS->INTENSET = TIMER_INTENSET_COMPARE0_Enabled << TIMER_INTENSET_COMPARE0_Pos;
+	NRF_TIMER1_NS->MODE = TIMER_MODE_MODE_Timer;
+	NRF_TIMER1_NS->TASKS_CLEAR = 1;
+	NRF_TIMER1_NS->PRESCALER = prescaler;
+	NRF_TIMER1_NS->BITMODE = TIMER_BITMODE_BITMODE_16Bit;
+	NRF_TIMER1_NS->CC[1] = comp1;
+	NRF_TIMER1_NS->SHORTS = TIMER_SHORTS_COMPARE1_CLEAR_Enabled << TIMER_SHORTS_COMPARE1_CLEAR_Pos;
+	NRF_TIMER1_NS->INTENSET = TIMER_INTENSET_COMPARE1_Enabled << TIMER_INTENSET_COMPARE1_Pos;
+	set_conversion_factor();
+	printf("timer tick = %f us\n", countToUs);
 	NRF_TIMER1_NS->TASKS_START = 1;
 }
 
+/********************************************************************************
+ *
+ ********************************************************************************/
 int dk_leds_init(void)
 {
 	int err = 0;
-	
+
 	if (!gpio_dev) {
 		printk("Cannot bind gpio device");
 		return -ENODEV;
@@ -218,96 +239,17 @@ int dk_leds_init(void)
 /********************************************************************************
  *
  ********************************************************************************/
-static void timer_handler(nrf_timer_event_t event_type, void * p_context)
+void stop_timer(void)
 {
-	if(event_type == NRF_TIMER_EVENT_COMPARE0)
-    {
-        char * p_msg = p_context;
-				// clear compare register event
-		NRF_TIMER0->EVENTS_COMPARE[0] = 0;
-		//LOG_INF("Timer count: >%d<", tCount);
-		// increment count
-		tCount++;
-        //LOG_INF("Timer finished. Context passed to the handler: >%s<", p_msg);
-    }
-
-	/*if(NRF_TIMER0->EVENTS_COMPARE[0] && NRF_TIMER0->INTENSET & TIMER_INTENSET_COMPARE0_Msk) {
-
-		// clear compare register event
-		NRF_TIMER0->EVENTS_COMPARE[0] = 0;
-		LOG_INF("Timer count: >%d<", tCount);
-		// increment count
-		tCount++;
-	}*/
+	NRF_TIMER1_NS->TASKS_STOP = 1;
 }
 
 /********************************************************************************
  * Stop Timer1
  ********************************************************************************/
-void stop_timer(void)
-{
-	NRF_TIMER1->TASKS_STOP = 1;
-}
-
-/********************************************************************************
- * Set up and start Timer1
- ********************************************************************************/
 void start_timer(void)
 {
-	NRF_TIMER0->MODE = TIMER_MODE_MODE_Timer;
-	NRF_TIMER0->TASKS_CLEAR = 1;
-	NRF_TIMER0->PRESCALER = prescaler;
-	NRF_TIMER0->BITMODE = TIMER_BITMODE_BITMODE_16Bit;
-	// set compare
-	NRF_TIMER0->CC[0] = comp1;
-	printf("timer tick = %f us\n", countToUs);
-	// enable compare 1
-	NRF_TIMER0->INTENSET = (TIMER_INTENSET_COMPARE0_Enabled << TIMER_INTENSET_COMPARE0_Pos);
-	// use the shorts register to clear compare 1
-	NRF_TIMER0->SHORTS = (TIMER_SHORTS_COMPARE0_CLEAR_Enabled << TIMER_SHORTS_COMPARE1_CLEAR_Pos);
-	// enable IRQ
-	//NVIC_EnableIRQ(TIMER1_IRQn);
-	// start timer
-	NRF_TIMER0->TASKS_START = 1;
-}
-
-/********************************************************************************
- * @brief Function for application main entry.
- *
- * @return Nothing.
- ********************************************************************************/
-void app_timer_init(void)
-{
-	uint32_t desired_ticks;
-    nrfx_err_t status;
-    (void)status;
-
-    nrfx_timer_t timer_inst = NRFX_TIMER_INSTANCE(TIMER_INST_IDX);
-    nrfx_timer_config_t config = NRFX_TIMER_DEFAULT_CONFIG;
-    config.mode = NRF_TIMER_MODE_TIMER;
-	config.bit_width = NRF_TIMER_BIT_WIDTH_16;
-	config.frequency = NRF_TIMER_FREQ_16MHz;
-	config.interrupt_priority = NRFX_TIMER_DEFAULT_CONFIG_IRQ_PRIORITY;
-    config.p_context = "Timer Zero";
-
-    status = nrfx_timer_init(&timer_inst, &config, timer_handler);
-    NRFX_ASSERT(status == NRFX_SUCCESS);
-
-	#if defined(__ZEPHYR__)
-    	#define TIMER_INST         NRFX_CONCAT_2(NRF_TIMER, TIMER_INST_IDX)
-    	#define TIMER_INST_HANDLER NRFX_CONCAT_3(nrfx_timer_, TIMER_INST_IDX, _irq_handler)
-    	IRQ_DIRECT_CONNECT(NRFX_IRQ_NUMBER_GET(TIMER_INST), IRQ_PRIO_LOWEST, TIMER_INST_HANDLER, 0);
-	#endif
-
-    nrfx_timer_clear(&timer_inst);
-    nrfx_timer_extended_compare(&timer_inst, 
-								 NRF_TIMER_CC_CHANNEL0, 
-								 TIME_TO_WAIT_MS,
-                                 TIMER_SHORTS_COMPARE0_CLEAR_Msk, 
-								 true);
-
-    nrfx_timer_enable(&timer_inst);
-    LOG_INF("Timer status: %s", nrfx_timer_is_enabled(&timer_inst) ? "enabled" : "disabled");
+	NRF_TIMER1_NS->TASKS_START = 1;
 }
 
 /********************************************************************************
@@ -315,8 +257,6 @@ void app_timer_init(void)
  ********************************************************************************/
 bool getDistance(float* dist)
 {
-	// set conversion factor
-	countToUs = 0.0625*comp1*(1 << prescaler);
 	gpio_pin_set(gpio_dev, TRIG, true);
 	nrfx_systick_delay_us(20);
 	gpio_pin_set(gpio_dev, TRIG, false);
@@ -329,10 +269,8 @@ bool getDistance(float* dist)
 	tCount = 0;
 	// wait till Echo pin goes low
 	while(gpio_pin_get(gpio_dev, ECHO));
-	tCount = 10;
 	float duration = countToUs*tCount;
 	float distance = duration*0.017;
-
 	if(distance < 400.0) {
 		// save
 		*dist = distance;
@@ -953,13 +891,22 @@ void main(void)
 	nrfx_systick_init();
 	LOG_INF("A Smart Rubbish Bin Collection IoT application started, version: %s", CONFIG_APP_VERSION);
 
+	// set up HC-SR04 pins
+	gpio_pin_configure(gpio_dev, TRIG, GPIO_OUTPUT_INACTIVE);
+	gpio_pin_configure(gpio_dev, ECHO, GPIO_INPUT | GPIO_PULL_DOWN);	
 	timer1_init();
 	dk_leds_init();
+	LOG_INF("Timer1");
 
 	while(1)
 	{
-		LOG_INF("tCount: %d", tCount);
 		k_msleep(SLEEP_TIME_MS);
+		// get HC-SR04 distance
+		LOG_INF("Get Rubbish Bin Level...\n");
+		if(getDistance(&dist)) {
+			// enable to print to serial port
+			LOG_INF("Rubbish Bin Level = %d cm\n", (uint32_t)dist);
+		}
 	}
 
 	configuer_all_outputs();
