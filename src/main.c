@@ -34,6 +34,9 @@
 /********************************************************************************
  *
  ********************************************************************************/
+//#define 		0
+//#define 		1
+
 #define TRIG 						21 // Output pin
 #define ECHO 						18 // Input pin
 
@@ -151,9 +154,7 @@ uint32_t tCount = 0;
 static volatile float countToUs = 1;
 static float dist;
 uint8_t prescaler = 1;
-//uint8_t prescaler = 8;
 uint16_t comp1 = 500;
-//uint16_t comp1 = 25000;
 
 /********************************************************************************
  *
@@ -162,7 +163,6 @@ void configuer_all_inputs(void);
 void configuer_all_outputs(void);
 bool getDistance(float* dist);
 void timer1_init(void);
-int dk_leds_init(void);
 void set_conversion_factor(void);
 
 /********************************************************************************
@@ -177,10 +177,6 @@ void set_conversion_factor(void)
 /********************************************************************************
  *
  ********************************************************************************/
-const uint8_t pins = 4;
-static const uint8_t led_pins[] = { LED0_GPIO_PIN, LED1_GPIO_PIN, LED2_GPIO_PIN,
-				 				    LED3_GPIO_PIN };
-
 ISR_DIRECT_DECLARE(timer1_handler)
 {
 	if (NRF_TIMER1_NS->EVENTS_COMPARE[1] && (NRF_TIMER1_NS->INTENSET) & (TIMER_INTENSET_COMPARE1_Msk))
@@ -211,29 +207,6 @@ void timer1_init(void)
 	set_conversion_factor();
 	printf("timer tick = %f us\n", countToUs);
 	NRF_TIMER1_NS->TASKS_START = 1;
-}
-
-/********************************************************************************
- *
- ********************************************************************************/
-int dk_leds_init(void)
-{
-	int err = 0;
-
-	if (!gpio_dev) {
-		printk("Cannot bind gpio device");
-		return -ENODEV;
-	}
-
-	for (size_t i = 0; i < ARRAY_SIZE(led_pins); i++) {
-		err = gpio_pin_configure(gpio_dev, led_pins[i], GPIO_OUTPUT_INACTIVE);
-
-		if (err) {
-			printk("Cannot configure LED gpio");
-			return err;
-		}
-	}
-	return err;
 }
 
 /********************************************************************************
@@ -320,11 +293,6 @@ void rubbish_bin_lid_open_timer_expiry_function(struct k_timer *timer_id)
 		rubbish_bin_open_counter = 0;
 		LOG_INF("The Rubbish Bin Lid is now closed!");
 		// get HC-SR04 distance
-		LOG_INF("Get Rubbish Bin Level...\n");
-		if(getDistance(&dist)) {
-			// enable to print to serial port
-			LOG_INF("Rubbish Bin Level = %d cm\n", (uint32_t)dist);
-		}
 	} else {
 		LOG_INF("Rubbish Bin Lid Open Counter: %d seconds", rubbish_bin_open_counter);
 		k_timer_start(&rubbish_bin_lid_open_timer, K_SECONDS(5), K_NO_WAIT);
@@ -535,6 +503,19 @@ static void connect_work_fn(struct k_work *work)
 	}
 
 	LOG_INF("Next connection retry in %d seconds", CONFIG_CONNECTION_RETRY_TIMEOUT_SECONDS);
+
+	if(rubbish_bin_lid_status == RUBBISH_BIN_LID_CLOSED) {
+		// get HC-SR04 distance
+		LOG_INF("Get Rubbish Bin Level...\n");
+		for (uint32_t i = 0; i < 5; i++)
+		{
+			if(getDistance(&dist)) {
+				// enable to print to serial port
+				LOG_INF("Rubbish Bin Level = %d cm\n", (uint32_t)dist);
+				nrfx_systick_delay_ms(250);
+			}		
+		}
+	}
 
 	k_work_schedule(&connect_work, K_SECONDS(CONFIG_CONNECTION_RETRY_TIMEOUT_SECONDS));
 }
@@ -889,33 +870,18 @@ void main(void)
 	uint64_t i, j;
 
 	nrfx_systick_init();
-	LOG_INF("A Smart Rubbish Bin Collection IoT application started, version: %s", CONFIG_APP_VERSION);
+	LOG_INF("\n\n\nA Smart Rubbish Bin Collection IoT application started, version: %s", CONFIG_APP_VERSION);
 
 	// set up HC-SR04 pins
 	gpio_pin_configure(gpio_dev, TRIG, GPIO_OUTPUT_INACTIVE);
 	gpio_pin_configure(gpio_dev, ECHO, GPIO_INPUT | GPIO_PULL_DOWN);	
-	timer1_init();
-	dk_leds_init();
-	LOG_INF("Timer1");
+	gpio_pin_set(gpio_dev, TRIG, false);
 
-	while(1)
-	{
-		k_msleep(SLEEP_TIME_MS);
-		// get HC-SR04 distance
-		LOG_INF("Get Rubbish Bin Level...\n");
-		if(getDistance(&dist)) {
-			// enable to print to serial port
-			LOG_INF("Rubbish Bin Level = %d cm\n", (uint32_t)dist);
-		}
-	}
-
+	// 
 	configuer_all_outputs();
 	configuer_all_inputs();
 	k_msleep(SLEEP_TIME_MS * 5);
 
-	// set up HC-SR04 pins
-	gpio_pin_configure(gpio_dev, TRIG, GPIO_OUTPUT_INACTIVE);
-	gpio_pin_configure(gpio_dev, ECHO, GPIO_INPUT | GPIO_PULL_DOWN); 
 	//
 	for(i = 0; i < 3; i++)
 	{
@@ -933,24 +899,9 @@ void main(void)
 		k_msleep(SLEEP_TIME_MS);
 	}
 	//
-	 
-	for(i = 0; i < 5; i++)
-	{
-		gpio_pin_set(gpio_dev, BUZZER, BUZZER_ON);
-		gpio_pin_set(gpio_dev, TRIG, true);
-		for(j = 0; j < 1000; j++)
-		{nrfx_systick_delay_us(1000);}	
-		gpio_pin_set(gpio_dev, BUZZER, BUZZER_OFF);
-		gpio_pin_set(gpio_dev, TRIG, false);
-		for(j = 0; j < 1000; j++)
-		{nrfx_systick_delay_us(1000);}
-	}
 	
-	// set up timers
-	//app_timer_init();
-	//
-	//start_timer();
-	// prints to serial port
+	timer1_init();
+	LOG_INF("Timer1");
 	LOG_INF("starting...\n");
 
 	//
@@ -1022,7 +973,9 @@ void main(void)
 	 ---------------------------------------------------------------------------*/
 	date_time_update_async(date_time_event_handler);
 
-	/* Postpone connecting to AWS IoT until date time has been obtained. */
+	/* 
+	  Postpone connecting to AWS IoT until date time has been obtained. 
+	 */
 	k_sem_take(&date_time_obtained, K_FOREVER);
 	k_work_schedule(&connect_work, K_NO_WAIT);
 }
