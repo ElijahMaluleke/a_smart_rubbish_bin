@@ -815,8 +815,8 @@ static void nrf_modem_lib_dfu_handler(void)
 static int app_topics_subscribe(void)
 {
 	int err;
-	static char custom_topic[75] = "my-custom-topic/example";
-	static char custom_topic_2[75] = "my-custom-topic/example_2";
+	static char custom_topic[75] = "nRF9160/pub";
+	static char custom_topic_2[75] = "SHFDIoT/pub";
 
 	const struct aws_iot_topic_data topics_list[APP_TOPICS_COUNT] = {
 		[0].str = custom_topic,
