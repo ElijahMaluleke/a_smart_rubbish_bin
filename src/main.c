@@ -155,6 +155,8 @@ static volatile float countToUs = 1;
 static float dist;
 uint8_t prescaler = 1;
 uint16_t comp1 = 500;
+// 
+uint32_t bin_open_timer = 0;
 
 /********************************************************************************
  *
@@ -289,6 +291,7 @@ void rubbish_bin_lid_open_timer_expiry_function(struct k_timer *timer_id)
 {
 	rubbish_bin_open_counter += 5;
 	if(rubbish_bin_lid_status == RUBBISH_BIN_LID_CLOSED) {
+		bin_open_timer = rubbish_bin_open_counter;
 		rubbish_bin_lid_open_timer_state = 0;
 		rubbish_bin_open_counter = 0;
 		LOG_INF("The Rubbish Bin Lid is now closed!");
@@ -405,28 +408,100 @@ static int shadow_update(bool version_number_include)
 {
 	int err;
 	char *message;
-	int64_t message_ts = 0;
+	char *bin_status = "empty";
+	char *street = "Ngonyama";
+	int64_t time_stamp = 0;
 	int16_t bat_voltage = 0;
+	uint32_t bin_level = 0;
+	uint32_t house_no = 5032;
+	uint64_t device_sr_no = 960059030;
 
 	gpio_pin_set(gpio_dev, LED_THREE, true);
 	//
-	err = date_time_now(&message_ts);
+	if(rubbish_bin_lid_status == RUBBISH_BIN_LID_CLOSED) {
+		// get HC-SR04 distance
+		/*LOG_INF("Get Rubbish Bin Level...\n");
+		for (uint32_t i = 0; i < 5; i++)
+		{
+			if(getDistance(&dist)) {
+				bin_level  = (uint32_t)dist;
+				// enable to print to serial port
+				LOG_INF("Rubbish Bin Level = %d cm\n", bin_level);
+				nrfx_systick_delay_ms(250);
+			}		
+		}*/
+
+		if(getDistance(&dist)) {
+			bin_level  = (uint32_t)dist;
+			// enable to print to serial port
+			LOG_INF("Rubbish Bin Level = %d cm\n", bin_level);
+			//nrfx_systick_delay_ms(250);
+		}		
+
+		if(bin_level >= 96) {
+			return;
+		}
+
+		if((bin_level >= 0) && (bin_level <= 9)) {
+			bin_status = "full";
+			gpio_pin_set(gpio_dev, BUZZER, BUZZER_ON);
+			k_msleep(500);
+			gpio_pin_set(gpio_dev, BUZZER, BUZZER_OFF);
+			k_msleep(500);
+		}
+		else if((bin_level >= 10) && (bin_level <= 19)) {
+			bin_status = "90% filled";
+		}
+		else if((bin_level >= 20) && (bin_level <= 29)) {
+			bin_status = "80% filled";
+		}
+		else if((bin_level >= 30) && (bin_level <= 39)) {
+			bin_status = "70% filled";
+		}
+		else if((bin_level >= 40) && (bin_level <= 49)) {
+			bin_status = "60% filled";
+		}
+		else if((bin_level >= 50) && (bin_level <= 59)) {
+			bin_status = "50% filled";
+		}
+		else if((bin_level >= 60) && (bin_level <= 69)) {
+			bin_status = "40% filled";
+		}
+		else if((bin_level >= 70) && (bin_level <= 79)) {
+			bin_status = "30% filled";
+		}
+		else if((bin_level >= 80) && (bin_level <= 89)) {
+			bin_status = "20% filled";
+		}
+		else if((bin_level >= 90) && (bin_level <= 95)) {
+			bin_status= "empty";
+		}
+		else {
+			return;
+		}
+		gpio_pin_set(gpio_dev, LED_FOUR, true);
+		k_msleep(500);
+		gpio_pin_set(gpio_dev, LED_FOUR, false);
+		k_msleep(500);
+	}
+
+	err = date_time_now(&time_stamp);
 	if (err) {
 		LOG_ERR("date_time_now, error: %d", err);
 		return err;
 	}
 
-#if defined(CONFIG_NRF_MODEM_LIB)
-	/* Request battery voltage data from the modem. */
-	err = modem_info_short_get(MODEM_INFO_BATTERY, &bat_voltage);
-	if (err != sizeof(bat_voltage)) {
-		LOG_ERR("modem_info_short_get, error: %d", err);
-		return err;
-	}
-#endif
+	#if defined(CONFIG_NRF_MODEM_LIB)
+		/* Request battery voltage data from the modem. */
+		err = modem_info_short_get(MODEM_INFO_BATTERY, &bat_voltage);
+		if (err != sizeof(bat_voltage)) {
+			LOG_ERR("modem_info_short_get, error: %d", err);
+			return err;
+		}
+	#endif
 
 	cJSON *root_obj = cJSON_CreateObject();
-			cJSON *state_obj = cJSON_CreateObject();
+	cJSON *state_obj = cJSON_CreateObject();
 	cJSON *reported_obj = cJSON_CreateObject();
 
 	if (root_obj == NULL || state_obj == NULL || reported_obj == NULL) {
@@ -443,8 +518,14 @@ static int shadow_update(bool version_number_include)
 		err = 0;
 	}
 
-	err += json_add_number(reported_obj, "batv", bat_voltage);
-	err += json_add_number(reported_obj, "ts", message_ts);
+	err += json_add_number(reported_obj, "device_sr_no", device_sr_no);
+	err += json_add_number(reported_obj, "bin_level", bin_level);
+	err += json_add_str(reported_obj, "bin_status", bin_status);
+	err += json_add_number(reported_obj, "bin_open_timer", bin_open_timer);
+	err += json_add_number(reported_obj, "bat_voltage", bat_voltage);
+	err += json_add_number(reported_obj, "house_no", house_no);
+	err += json_add_str(reported_obj, "street", street);
+	err += json_add_number(reported_obj, "time_stamp", time_stamp);
 	err += json_add_obj(state_obj, "reported", reported_obj);
 	err += json_add_obj(root_obj, "state", state_obj);
 
@@ -474,15 +555,16 @@ static int shadow_update(bool version_number_include)
 		LOG_ERR("aws_iot_send, error: %d", err);
 	}
 	//
+	
+	cJSON_FreeString(message);
+
 	k_msleep(SLEEP_TIME_MS);	
 	gpio_pin_set(gpio_dev, LED_THREE, false);
-
-	cJSON_FreeString(message);
 
 cleanup:
 
 	cJSON_Delete(root_obj);
-
+	
 	return err;
 }
 
@@ -503,19 +585,6 @@ static void connect_work_fn(struct k_work *work)
 	}
 
 	LOG_INF("Next connection retry in %d seconds", CONFIG_CONNECTION_RETRY_TIMEOUT_SECONDS);
-
-	if(rubbish_bin_lid_status == RUBBISH_BIN_LID_CLOSED) {
-		// get HC-SR04 distance
-		LOG_INF("Get Rubbish Bin Level...\n");
-		for (uint32_t i = 0; i < 5; i++)
-		{
-			if(getDistance(&dist)) {
-				// enable to print to serial port
-				LOG_INF("Rubbish Bin Level = %d cm\n", (uint32_t)dist);
-				nrfx_systick_delay_ms(250);
-			}		
-		}
-	}
 
 	k_work_schedule(&connect_work, K_SECONDS(CONFIG_CONNECTION_RETRY_TIMEOUT_SECONDS));
 }
@@ -746,6 +815,10 @@ static void lte_handler(const struct lte_lc_evt *const evt)
 		LOG_INF("RRC mode: %s",
 			evt->rrc_mode == LTE_LC_RRC_MODE_CONNECTED ?
 			"Connected" : "Idle");
+		gpio_pin_set(gpio_dev, LED_TWO, true);
+		k_msleep(250);
+		gpio_pin_set(gpio_dev, LED_TWO, false);	
+		k_msleep(250);
 		break;
 	case LTE_LC_EVT_CELL_UPDATE:
 		LOG_INF("LTE cell changed: Cell ID: %d, Tracking area: %d",
@@ -815,7 +888,7 @@ static void nrf_modem_lib_dfu_handler(void)
 static int app_topics_subscribe(void)
 {
 	int err;
-	static char custom_topic[75] = "nRF9160/pub";
+	static char custom_topic[75] = "nRF9160DK/pub";
 	static char custom_topic_2[75] = "SHFDIoT/pub";
 
 	const struct aws_iot_topic_data topics_list[APP_TOPICS_COUNT] = {
@@ -905,6 +978,7 @@ void main(void)
 	LOG_INF("starting...\n");
 
 	//
+	gpio_pin_set(gpio_dev, LED_TWO, true);
 	gpio_pin_set(gpio_dev, LED_THREE, true);
 
 	/* Configure the interrupt on the reed switch's pin */

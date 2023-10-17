@@ -12,11 +12,11 @@ config APP_VERSION
 
 config PUBLICATION_INTERVAL_SECONDS
 	int "Interval in seconds that the sample will publish data"
-	default 60
+	default 5
 
 config CONNECTION_RETRY_TIMEOUT_SECONDS
 	int "Number of seconds between each AWS IoT connection retry"
-	default 30
+	default 10
 
 module = AWS_IOT_SAMPLE
 module-str = AWS IoT sample
